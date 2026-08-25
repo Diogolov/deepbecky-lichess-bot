@@ -1,0 +1,202 @@
+name: Deep Becky Lichess Bot 24-7
+
+on:
+  workflow_dispatch: # Permite iniciar manualmente a qualquer momento pelo botão do GitHub
+  schedule:
+    - cron: '0 */5 * * *' # Gatilho automático de segurança a cada 5 horas
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  run-lichess-bot:
+    name: Lichess Bot Runner (4 vCPU / 16GB RAM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 350 # Limite de segurança de 5h50 por VM (30 min de folga para finalizar qualquer partida)
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Build Tools & Compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl git clang lld
+
+      - name: Clone and Compile Latest Deep Becky Engine
+        run: |
+          echo "Cloning latest engine from official repository..."
+          git clone https://github.com/diogolov-chess/DeepBecky.git engine_repo
+          cd engine_repo/src
+          make clean
+          # Compila com otimizações AVX2/BMI2 usando todos os núcleos da VM
+          make -j$(nproc) PROFILE=bmi2
+          echo "Engine compilation complete!"
+
+      - name: Setup Lichess-Bot Environment & Dynamic Engine
+        run: |
+          echo "Cloning official lichess-bot client..."
+          git clone https://github.com/lichess-bot-devs/lichess-bot.git lichess_app
+          cd lichess_app
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+          # 1. Encontra automaticamente o binário compilado (independente de versão como 3.0, 3.1, dev, etc.)
+          ENGINE_BIN=$(find ../engine_repo/src -maxdepth 1 -type f -executable ! -name "*.sh" ! -name "Makefile" | head -n 1)
+          echo "Detected engine binary: $ENGINE_BIN"
+          cp "$ENGINE_BIN" ./engine_binary
+          chmod +x ./engine_binary
+
+          # 2. Copia todas as redes neurais (.nnue) encontradas no repositório
+          cp ../engine_repo/src/*.nnue ./ 2>/dev/null || true
+
+          # 3. Cria o arquivo de configuração com regras personalizadas
+          cat << 'EOF' > config.yml
+          token: "${{ secrets.LICHESS_TOKEN }}"
+          url: "https://lichess.org/"
+
+          engine:
+            dir: "./"
+            name: "engine_binary"
+            debug: false
+            working_dir: ""
+            protocol: "uci"
+            ponder: true
+
+            polyglot:
+              enabled: false
+
+            draw_or_resign:
+              resign_enabled: false
+              resign_score: -1000
+              resign_for_egtb_minus_two: true
+              resign_moves: 3
+              offer_draw_enabled: true
+              offer_draw_score: 0
+              offer_draw_for_egtb_zero: true
+              offer_draw_moves: 10
+              offer_draw_pieces: 10
+
+            online_moves:
+              max_out_of_book_moves: 10
+              max_retries: 2
+              chessdb_book:
+                enabled: false
+              lichess_cloud_analysis:
+                enabled: false
+              lichess_opening_explorer:
+                enabled: false
+              online_egtb:
+                enabled: false
+
+            lichess_bot_tbs:
+              syzygy:
+                enabled: false
+              gaviota:
+                enabled: false
+
+            uci_options:
+              Threads: 4
+              Hash: 2048
+              UseSingular: true
+
+            silence_stderr: false
+
+          abort_time: 30
+          fake_think_time: false
+          rate_limiting_delay: 0
+          max_takebacks_accepted: 0
+          quit_after_all_games_finish: true
+
+          correspondence:
+            move_time: 60
+            checkin_period: 300
+            disconnect_time: 150
+            ponder: false
+
+          challenge:
+            concurrency: 1
+            sort_by: "best"
+            preference: "none"
+            accept_bot: true
+            only_bot: false
+            max_increment: 20
+            min_increment: 0
+            max_base: 1800
+            min_base: 0
+            max_days: 14
+            min_days: 1
+            variants:
+              - standard
+            time_controls:
+              - bullet
+              - blitz
+              - rapid
+              - classical
+            modes:
+              - rated
+            min_rating: 1900
+            max_rating: 2400
+            bullet_requires_increment: true
+            max_simultaneous_games_per_user: 5
+
+          greeting:
+            hello: "Hi! I'm {me}. Good luck! Type !help for a list of commands I can respond to."
+            goodbye: "Good game!"
+            hello_spectators: "Hi! I'm {me}. Type !help for a list of commands I can respond to."
+            goodbye_spectators: "Thanks for watching!"
+
+          matchmaking:
+            allow_matchmaking: true
+            allow_during_games: false
+            challenge_variant: "random"
+            challenge_timeout: 2
+            challenge_initial_time:
+              - 60
+              - 180
+              - 300
+              - 600
+            challenge_increment:
+              - 0
+              - 1
+              - 2
+            opponent_min_rating: 1800
+            opponent_max_rating: 2500
+            opponent_rating_difference: 350
+            rating_preference: "none"
+            challenge_mode: "rated"
+            challenge_filter: "fine"
+            include_challenge_block_list: false
+          EOF
+
+          # Substitui a tag pelo token seguro dos Secrets
+          sed -i "s|\${{ secrets.LICHESS_TOKEN }}|${{ secrets.LICHESS_TOKEN }}|g" config.yml
+
+      - name: Run Lichess Bot Session with Graceful Handover
+        run: |
+          cd lichess_app
+          echo "Starting Lichess Bot session in background..."
+          python lichess-bot.py &
+          BOT_PID=$!
+          echo "Lichess Bot PID: $BOT_PID"
+
+          # Executa por 5h 20min (19200 segundos)
+          echo "Session running for 19200s (5h20m)..."
+          sleep 19200
+
+          echo "5h20m reached! Triggering next runner via GitHub API..."
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.AUTO_RESTART_PAT }}" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/lichess_bot.yml/dispatches \
+            -d '{"ref":"main"}'
+
+          echo "Signaling graceful shutdown (waiting for current game to finish)..."
+          kill -INT $BOT_PID || true
+
+          # Aguarda a partida em andamento terminar normalmente
+          wait $BOT_PID || true
+          echo "Session finished cleanly without forfeits. Handover complete!"
