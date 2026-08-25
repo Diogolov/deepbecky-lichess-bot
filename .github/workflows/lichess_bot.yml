@@ -1,9 +1,7 @@
 name: Deep Becky Lichess Bot 24-7
 
 on:
-  workflow_dispatch: # Permite iniciar manualmente a qualquer momento pelo botão do GitHub
-  schedule:
-    - cron: '0 */5 * * *' # Gatilho automático de segurança a cada 5 horas
+  workflow_dispatch: # Inicia manualmente pelo botão ou automaticamente pelo revezamento contínuo (5h20m)
 
 permissions:
   contents: write
