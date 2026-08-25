@@ -24,17 +24,17 @@ jobs:
       - name: Install Build Tools & Compilers
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl git clang lld
+          sudo apt-get install -y build-essential curl git clang llvm lld
 
-      - name: Clone and Compile Latest Deep Becky Engine
+      - name: Clone and Compile Latest Deep Becky Engine (Clang + PGO)
         run: |
           echo "Cloning latest engine from official repository..."
           git clone https://github.com/diogolov-chess/DeepBecky.git engine_repo
           cd engine_repo/src
-          make clean
-          # Compila com otimizações AVX2/BMI2 usando todos os núcleos da VM
-          make -j$(nproc) PROFILE=bmi2
-          echo "Engine compilation complete!"
+          make distclean || make clean
+          # Compilação em 2 etapas com Clang + PGO (Profile-Guided Optimization) + ThinLTO + Native CPU
+          make pgo CXX=clang++ PROFILE=native
+          echo "Deep Becky Clang+PGO build complete!"
 
       - name: Setup Lichess-Bot Environment & Dynamic Engine
         run: |
@@ -44,7 +44,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-          # 1. Encontra automaticamente o binário compilado (independente de versão como 3.0, 3.1, dev, etc.)
+          # 1. Encontra automaticamente o binário compilado (independente da versão: 3.0, 3.1, dev, etc.)
           ENGINE_BIN=$(find ../engine_repo/src -maxdepth 1 -type f -executable ! -name "*.sh" ! -name "Makefile" | head -n 1)
           echo "Detected engine binary: $ENGINE_BIN"
           cp "$ENGINE_BIN" ./engine_binary
@@ -53,126 +53,247 @@ jobs:
           # 2. Copia todas as redes neurais (.nnue) encontradas no repositório
           cp ../engine_repo/src/*.nnue ./ 2>/dev/null || true
 
-          # 3. Cria o arquivo de configuração com regras personalizadas
+          # 3. Cria o arquivo de configuração com todos os comentários explicativos e opções
           cat << 'EOF' > config.yml
-          token: "${{ secrets.LICHESS_TOKEN }}"
-          url: "https://lichess.org/"
+          token: "${{ secrets.LICHESS_TOKEN }}" # Token OAuth2 da conta do Bot no Lichess.
+          url: "https://lichess.org/"           # URL base do Lichess.
 
-          engine:
-            dir: "./"
-            name: "engine_binary"
-            debug: false
-            working_dir: ""
-            protocol: "uci"
-            ponder: true
+          engine:                               # Configurações da Engine de Xadrez.
+            dir: "./"                           # Diretório onde está a engine (pasta atual da VM).
+            name: "engine_binary"               # Nome padrão (detecta qualquer versão compilada da Deep Becky automaticamente).
+            debug: false                        # Quando ativado (true), registra nos logs toda a comunicação inicial com a engine.
+          # interpreter: "java"                 # Interpretador caso a engine não seja executável nativo.
+          # interpreter_options:
+          #   - "-jar"
+            working_dir: ""                     # Diretório onde a engine lê e grava arquivos.
+            protocol: "uci"                     # Protocolo de comunicação: "uci", "xboard" ou "homemade".
+            ponder: true                        # Pensar durante o tempo do adversário (pondering).
 
-            polyglot:
-              enabled: false
+            polyglot:                           # Livro de aberturas Polyglot (.bin local).
+              enabled: false                    # Ativar livro de aberturas polyglot.
+              book:
+                standard:                       # Lista de caminhos para os arquivos de livro da variante padrão.
+                  - engines/book1.bin
+                  - engines/book2.bin
+          #     atomic:                         # Lista de livros para variantes específicas:
+          #       - engines/atomicbook1.bin
+          #     chess960, giveaway, crazyhouse, horde, kingofthehill, racingkings, 3check
+              min_weight: 1                     # Peso mínimo para escolher um lance do livro.
+              selection: "weighted_random"      # "weighted_random", "uniform_random" ou "best_move".
+              max_depth: 20                     # Até quantos lances da abertura utilizar lances do livro.
+              normalization: "none"             # Método de normalização: "none", "sum" ou "max".
 
-            draw_or_resign:
-              resign_enabled: false
-              resign_score: -1000
-              resign_for_egtb_minus_two: true
-              resign_moves: 3
-              offer_draw_enabled: true
-              offer_draw_score: 0
-              offer_draw_for_egtb_zero: true
-              offer_draw_moves: 10
-              offer_draw_pieces: 10
+            draw_or_resign:                     # Configurações de Desistência e Proposta de Empate automáticos.
+              resign_enabled: false             # Se o bot deve abandonar partidas perdidas automaticamente.
+              resign_score: -1000               # Pontuação em centipawns para abandonar (-1000 = -10 peões).
+              resign_for_egtb_minus_two: true   # Abandona se a base de finais indicar derrota forçada (WDL = -2).
+              resign_moves: 3                   # Quantidade de lances seguidos abaixo do limite para abandonar.
+              offer_draw_enabled: true          # Se o bot deve oferecer / aceitar propostas de empate.
+              offer_draw_score: 0               # Avaliação em centipawns para aceitar/propor empate (0 = igualdade).
+              offer_draw_for_egtb_zero: true    # Propõe/aceita empate se a base de finais indicar empate forçado (WDL = 0).
+              offer_draw_moves: 10              # Quantidade de lances seguidos com a pontuação de empate.
+              offer_draw_pieces: 10             # Só propõe/aceita empate se houver até este número de peças no tabuleiro.
 
-            online_moves:
-              max_out_of_book_moves: 10
-              max_retries: 2
-              chessdb_book:
-                enabled: false
-              lichess_cloud_analysis:
-                enabled: false
-              lichess_opening_explorer:
-                enabled: false
-              online_egtb:
-                enabled: false
+            online_moves:                       # Consulta de lances online (Livros na nuvem e bases de finais).
+              max_out_of_book_moves: 10         # Para de consultar livros após 'N' posições fora do livro.
+              max_retries: 2                    # Quantidade máxima de tentativas ao buscar lance online.
+          #   max_depth: 10                     # Limite de profundidade de lances para usar livros online.
+              chessdb_book:                     # Livro de aberturas online do ChessDB.
+                enabled: false                  # Ativar o livro ChessDB.
+                min_time: 20                    # Tempo mínimo de partida (em segundos) para usar o livro.
+                max_time: 10800                 # Tempo máximo de partida (em segundos) para usar o livro.
+                move_quality: "good"            # Qualidade: "all" (todos), "good" (bons) ou "best" (melhores).
+                min_depth: 20                   # Profundidade mínima da análise (apenas para "best").
+              lichess_cloud_analysis:           # Análise na nuvem do Lichess.
+                enabled: false                  # Ativar análise pré-calculada do Lichess.
+                min_time: 20                    # Tempo mínimo de partida para consultar a nuvem.
+                max_time: 10800                 # Tempo máximo de partida para consultar a nuvem.
+                move_quality: "best"            # Qualidade dos lances: "good" ou "best".
+                max_score_difference: 50        # Diferença máxima de pontuação (apenas para "good").
+                min_depth: 20                   # Profundidade mínima da análise.
+                min_knodes: 0                   # Mínimo de knodes da análise.
+              lichess_opening_explorer:         # Explorador de aberturas do Lichess.
+                enabled: false                  # Ativar explorador de aberturas.
+                min_time: 20                    # Tempo mínimo de partida.
+                max_time: 10800                 # Tempo máximo de partida.
+                source: "masters"               # Fonte: "lichess", "masters" (mestres) ou "player" (jogador).
+                player_name: ""                 # Nome do jogador (se source for "player").
+                sort: "winrate"                 # "winrate" (taxa de vitória) ou "games_played" (mais jogados).
+                min_games: 10                   # Número mínimo de vezes que um lance foi jogado.
+              online_egtb:                      # Bases de finais online (Endgame Tablebases).
+                enabled: false                  # Ativar bases de finais online.
+                min_time: 20                    # Tempo mínimo de partida para consultar base online.
+                max_time: 10800                 # Tempo máximo de partida para consultar base online.
+                max_pieces: 7                   # Quantidade máxima de peças no tabuleiro para consultar.
+                source: "lichess"               # Provedor: "lichess" ou "chessdb".
+                move_quality: "best"            # "best" (joga o melhor) ou "suggest" (sugere para a engine).
 
-            lichess_bot_tbs:
+            lichess_bot_tbs:                    # Bases de finais locais lidas pelo script do bot.
               syzygy:
-                enabled: false
+                enabled: false                  # Ativar base Syzygy local lida pelo bot.
+                paths:
+                  - "engines/syzygy"
+                max_pieces: 7
+                move_quality: "best"
               gaviota:
-                enabled: false
+                enabled: false                  # Ativar base Gaviota local lida pelo bot.
+                paths:
+                  - "engines/gaviota"
+                max_pieces: 5
+                min_dtm_to_consider_as_wdl_1: 120
+                move_quality: "best"
 
-            uci_options:
-              Threads: 4
-              Hash: 2048
-              UseSingular: true
+          # engine_options:                     # Parâmetros de linha de comando para a engine ao executá-la.
+          #   cpuct: 3.1
 
-            silence_stderr: false
+            homemade_options:                   # Opções para engines caseiras em Python.
+          #   Hash: 256
 
-          abort_time: 30
-          fake_think_time: false
-          rate_limiting_delay: 0
-          max_takebacks_accepted: 0
-          quit_after_all_games_finish: true
+            uci_options:                        # Opções UCI enviadas diretamente para a engine.
+          #   Move Overhead: 100                # Aumente (em ms) se o bot perder por tempo com frequência.
+              Threads: 4                        # Otimizado: 4 vCPUs no GitHub Actions.
+              Hash: 2048                        # Otimizado: 2048 MB (2 GB) de Hash na RAM de 16GB.
+              UseSingular: true                 # Ativa extensões singulares de busca na Deep Becky.
+          #   EvalFile: "db-leela500m-v5.nnue"  # Nome da rede NNUE (Deep Becky detecta automaticamente se omitido).
+          #   SyzygyPath: "./syzygy/"           # Caminho para as bases Syzygy lidas diretamente pela engine.
+          #   UCI_ShowWDL: true                 # Exibir chances de vitória/empate/derrota nos logs da engine.
+          #   go_commands:                      # Limites manuais para o comando 'go' do UCI.
+          #     nodes: 1                        # Limitar a busca a este número exato de nós.
+          #     depth: 5                        # Limitar a busca a esta profundidade exata em plies.
+          #     movetime: 1000                  # Limitar a busca a exatamente este tempo em milissegundos.
 
-          correspondence:
-            move_time: 60
-            checkin_period: 300
-            disconnect_time: 150
-            ponder: false
+          # xboard_options:                     # Opções XBoard (para engines com protocolo xboard).
+          #   cores: "4"
+          #   memory: "4096"
 
-          challenge:
-            concurrency: 1
-            sort_by: "best"
-            preference: "none"
-            accept_bot: true
-            only_bot: false
-            max_increment: 20
-            min_increment: 0
-            max_base: 1800
-            min_base: 0
-            max_days: 14
-            min_days: 1
-            variants:
-              - standard
-            time_controls:
+            silence_stderr: false               # Silenciar saída de erros (stderr) da engine.
+
+          abort_time: 30                        # Tempo (em segundos) para abortar partida sem atividade inicial.
+          fake_think_time: false                # Simular artificialmente um tempo de pensamento humano antes de jogar.
+          rate_limiting_delay: 0                # Espera (em ms) após enviar lance para evitar limites da API Lichess.
+          max_takebacks_accepted: 0             # Quantidade máxima de pedidos de voltar lance aceitos por partida.
+          quit_after_all_games_finish: true     # ESSENCIAL: Aguarda qualquer partida terminar antes de encerrar aos 5h20m.
+
+          correspondence:                       # Configurações para partidas por correspondência (dias por lance).
+            move_time: 60                       # Tempo (em segundos) que a engine pensará em correspondência.
+            checkin_period: 300                 # Frequência (em segundos) para checar novos lances após desconectar.
+            disconnect_time: 150                # Tempo (em segundos) antes de desconectar de correspondência.
+            ponder: false                       # Ponder em correspondência.
+
+          challenge:                            # Regras para DESAFIOS RECEBIDOS (outros desafiando seu bot).
+            concurrency: 1                      # Partidas simultâneas (1 é o ideal para foco total dos 4 núcleos).
+            sort_by: "best"                     # Ordem de escolha: "best" (melhor rating) ou "first" (primeiro que chegar).
+            preference: "none"                  # Preferência: "none" (qualquer), "human" (humanos) ou "bot" (outros bots).
+            accept_bot: true                    # Aceitar desafios vindos de outros bots.
+            only_bot: false                     # Aceitar desafios exclusivamente de outros bots.
+            max_increment: 20                   # Incremento máximo de tempo (em segundos) aceito (máx Lichess: 180).
+            min_increment: 0                    # Incremento mínimo de tempo (em segundos) aceito.
+            max_base: 1800                      # Tempo base máximo (em segundos) aceito (1800s = 30 min. Máx: 10800s / 3h).
+            min_base: 0                         # Tempo base mínimo (em segundos) aceito.
+            max_days: 14                        # Máximo de dias por lance para correspondência.
+            min_days: 1                         # Mínimo de dias por lance para correspondência.
+            variants:                           # Variantes de xadrez aceitas (https://lichess.org/variant).
+              - standard                        # Xadrez padrão.
+          #   - fromPosition                    # Posição personalizada.
+          #   - antichess                       # Antichess / Giveaway.
+          #   - atomic                          # Xadrez Atômico.
+          #   - chess960                        # Xadrez 960 (Fischer Random).
+          #   - crazyhouse                      # Crazyhouse.
+          #   - horde                           # Horda.
+          #   - kingOfTheHill                   # Rei da Colina.
+          #   - racingKings                     # Corrida de Reis.
+          #   - threeCheck                      # 3 Checks.
+            time_controls:                      # Ritmos de tempo aceitos.
               - bullet
               - blitz
               - rapid
               - classical
-            modes:
-              - rated
-            min_rating: 1900
-            max_rating: 2400
-            bullet_requires_increment: true
-            max_simultaneous_games_per_user: 5
+          #   - correspondence
+            modes:                              # Modos de jogo aceitos.
+          #   - casual                          # Partidas casuais / sem valer rating (descomente para aceitar).
+              - rated                           # Partidas ranqueadas / valendo rating.
+          # block_list:                         # Lista de usuários cujos desafios serão sempre recusados:
+          #   - user1
+          #   - user2
+          # online_block_list:                  # URL com lista de bots a serem bloqueados (1 por linha):
+          #   - example.com/blocklist
+          # allow_list:                         # Lista de usuários exclusivos (se preenchida, recusa todos os outros):
+          #   - user3
+          #   - user4
+          # recent_bot_challenge_age: 60        # Idade máxima (em segundos) para um desafio de bot ser recente.
+            max_recent_bot_challenges: 4        # Quantidade máxima de desafios recentes aceitos do mesmo bot.
+            min_rating: 1900                    # Rating mínimo do desafiante para aceitar desafio (mín: 600).
+            max_rating: 2400                    # Rating máximo do desafiante para aceitar desafio (máx: 4000).
+          # rating_difference: 250              # Diferença máxima de rating (sobrescreve min/max se ativo).
+            bullet_requires_increment: true     # Exigir que Bullet contra bots tenha incremento > 0.
+            max_simultaneous_games_per_user: 1  # Número de partidas simultâneas.
 
-          greeting:
+          greeting:                             # Mensagens automáticas no chat da partida.
             hello: "Hi! I'm {me}. Good luck! Type !help for a list of commands I can respond to."
             goodbye: "Good game!"
             hello_spectators: "Hi! I'm {me}. Type !help for a list of commands I can respond to."
             goodbye_spectators: "Thanks for watching!"
 
-          matchmaking:
-            allow_matchmaking: true
-            allow_during_games: false
-            challenge_variant: "random"
-            challenge_timeout: 2
-            challenge_initial_time:
-              - 60
-              - 180
-              - 300
-              - 600
-            challenge_increment:
+          # pgn_directory: "game_records"       # Diretório onde as partidas serão gravadas em formato PGN.
+          # pgn_file_grouping: "game"           # Agrupamento PGN: "game" (uma por arquivo), "opponent" ou "all".
+
+          matchmaking:                          # DESAFIOS AUTOMÁTICOS ENVIADOS (Seu bot desafiando outros bots).
+            allow_matchmaking: true             # Defina como 'true' para o bot desafiar outros bots automaticamente.
+            allow_during_games: false           # Criar novos desafios mesmo enquanto estiver jogando.
+            challenge_variant: "random"         # Variante a desafiar: 'random' escolhe entre as habilitadas.
+            challenge_timeout: 2                # Envia desafio após ficar ocioso por este tempo (em minutos).
+            challenge_initial_time:             # Tempo base em segundos do desafio (escolhido da lista):
+              - 60                              # 1 minuto (Bullet)
+              - 180                             # 3 minutos (Blitz)
+              - 300                             # 5 minutos (Blitz)
+              - 600                             # 10 minutos (Rapid)
+            challenge_increment:                # Incremento em segundos do desafio (escolhido da lista):
               - 0
               - 1
               - 2
-            opponent_min_rating: 1800
-            opponent_max_rating: 2500
-            opponent_rating_difference: 350
-            rating_preference: "none"
-            challenge_mode: "rated"
-            challenge_filter: "fine"
-            include_challenge_block_list: false
+          # challenge_days:                     # Dias por lance para correspondência enviada:
+          #   - 1
+          #   - 2
+            opponent_min_rating: 1800           # Rating mínimo do adversário a ser desafiado.
+            opponent_max_rating: 2500           # Rating máximo do adversário a ser desafiado.
+            opponent_rating_difference: 350     # Diferença máxima de rating do adversário a ser desafiado.
+            rating_preference: "none"           # "none" (qualquer), "high" (mais alto) ou "low" (mais baixo).
+            challenge_mode: "rated"             # 'casual', 'rated' (valendo rating) ou 'random'.
+            challenge_filter: "fine"            # Se recusado, filtro para não reenviar: 'none', 'coarse' ou 'fine'.
+          # block_list:                         # Lista de bots que NUNCA serão desafiados pelo matchmaking:
+          #   - user1
+          #   - user2
+          # online_block_list:                  # URL com lista de bots que não serão desafiados:
+          #   - example.com/blocklist
+            include_challenge_block_list: false # Incluir a block_list de recebidos também no matchmaking.
+
+          # overrides:                          # Regras personalizadas alternativas para o matchmaking:
+          #   bullet_only_horde:
+          #     challenge_variant: "horde"
+          #     challenge_initial_time:
+          #       - 1
+          #       - 2
+          #     challenge_increment:
+          #       - 0
+          #       - 1
+          #
+          #   easy_chess960:
+          #     challenge_variant: "chess960"
+          #     opponent_min_rating: 400
+          #     opponent_max_rating: 1200
+          #     opponent_rating_difference:
+          #     challenge_mode: casual
+          #
+          #   no_pressure_correspondence:
+          #     challenge_initial_time:
+          #     challenge_increment:
+          #     challenge_days:
+          #       - 2
+          #       - 3
+          #     challenge_mode: casual
           EOF
 
-          # Substitui a tag pelo token seguro dos Secrets
+          # Injeta o token seguro vindo dos Secrets do GitHub
           sed -i "s|\${{ secrets.LICHESS_TOKEN }}|${{ secrets.LICHESS_TOKEN }}|g" config.yml
 
       - name: Run Lichess Bot Session with Graceful Handover
