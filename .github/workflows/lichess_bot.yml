@@ -151,7 +151,6 @@ jobs:
           #   Move Overhead: 100                # Aumente (em ms) se o bot perder por tempo com frequência.
               Threads: 4                        # Otimizado: 4 vCPUs no GitHub Actions.
               Hash: 2048                        # Otimizado: 2048 MB (2 GB) de Hash na RAM de 16GB.
-              UseSingular: true                 # Ativa extensões singulares de busca na Deep Becky.
           #   EvalFile: "db-leela500m-v5.nnue"  # Nome da rede NNUE (Deep Becky detecta automaticamente se omitido).
           #   SyzygyPath: "./syzygy/"           # Caminho para as bases Syzygy lidas diretamente pela engine.
           #   UCI_ShowWDL: true                 # Exibir chances de vitória/empate/derrota nos logs da engine.
@@ -221,7 +220,7 @@ jobs:
           # recent_bot_challenge_age: 60        # Idade máxima (em segundos) para um desafio de bot ser recente.
             max_recent_bot_challenges: 4        # Quantidade máxima de desafios recentes aceitos do mesmo bot.
             min_rating: 1900                    # Rating mínimo do desafiante para aceitar desafio (mín: 600).
-            max_rating: 2900                    # Rating máximo do desafiante para aceitar desafio (máx: 4000).
+            max_rating: 2400                    # Rating máximo do desafiante para aceitar desafio (máx: 4000).
           # rating_difference: 250              # Diferença máxima de rating (sobrescreve min/max se ativo).
             bullet_requires_increment: true     # Exigir que Bullet contra bots tenha incremento > 0.
             max_simultaneous_games_per_user: 1  # Número de partidas simultâneas.
@@ -239,7 +238,7 @@ jobs:
             allow_matchmaking: true             # Defina como 'true' para o bot desafiar outros bots automaticamente.
             allow_during_games: false           # Criar novos desafios mesmo enquanto estiver jogando.
             challenge_variant: "random"         # Variante a desafiar: 'random' escolhe entre as habilitadas.
-            challenge_timeout: 5                # Envia desafio após ficar ocioso por este tempo (em minutos).
+            challenge_timeout: 2                # Envia desafio após ficar ocioso por este tempo (em minutos).
             challenge_initial_time:             # Tempo base em segundos do desafio (escolhido da lista):
               - 60                              # 1 minuto (Bullet)
               - 180                             # 3 minutos (Blitz)
@@ -253,8 +252,8 @@ jobs:
           #   - 1
           #   - 2
             opponent_min_rating: 1800           # Rating mínimo do adversário a ser desafiado.
-            opponent_max_rating: 2700           # Rating máximo do adversário a ser desafiado.
-          # opponent_rating_difference: 350     # Diferença máxima de rating do adversário a ser desafiado.
+            opponent_max_rating: 2500           # Rating máximo do adversário a ser desafiado.
+            opponent_rating_difference: 350     # Diferença máxima de rating do adversário a ser desafiado.
             rating_preference: "none"           # "none" (qualquer), "high" (mais alto) ou "low" (mais baixo).
             challenge_mode: "rated"             # 'casual', 'rated' (valendo rating) ou 'random'.
             challenge_filter: "fine"            # Se recusado, filtro para não reenviar: 'none', 'coarse' ou 'fine'.
@@ -302,9 +301,17 @@ jobs:
           BOT_PID=$!
           echo "Lichess Bot PID: $BOT_PID"
 
-          # Executa por 5h 20min (19200 segundos)
-          echo "Session running for 19200s (5h20m)..."
-          sleep 19200
+          # Aguarda 5 segundos para verificar se a engine e o bot inicializaram corretamente
+          sleep 5
+          if ! kill -0 $BOT_PID 2>/dev/null; then
+            echo "ERRO CRÍTICO: O lichess-bot encerrou logo na inicialização! Verifique os logs de erro acima."
+            exit 1
+          fi
+
+          echo "Lichess Bot conectado e online com sucesso!"
+          # Executa pelo restante do ciclo (19.195s totalizando 5h 20min)
+          echo "Session running for 19195s (~5h20m)..."
+          sleep 19195
 
           echo "5h20m reached! Triggering next runner via GitHub API..."
           curl -X POST \
