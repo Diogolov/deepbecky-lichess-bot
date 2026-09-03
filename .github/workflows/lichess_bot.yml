@@ -82,14 +82,14 @@ jobs:
               normalization: "none"             # Método de normalização: "none", "sum" ou "max".
 
             draw_or_resign:                     # Configurações de Desistência e Proposta de Empate automáticos.
-              resign_enabled: false             # Se o bot deve abandonar partidas perdidas automaticamente.
+              resign_enabled: true             # Se o bot deve abandonar partidas perdidas automaticamente.
               resign_score: -1000               # Pontuação em centipawns para abandonar (-1000 = -10 peões).
               resign_for_egtb_minus_two: true   # Abandona se a base de finais indicar derrota forçada (WDL = -2).
-              resign_moves: 3                   # Quantidade de lances seguidos abaixo do limite para abandonar.
+              resign_moves: 5                   # Quantidade de lances seguidos abaixo do limite para abandonar.
               offer_draw_enabled: true          # Se o bot deve oferecer / aceitar propostas de empate.
-              offer_draw_score: 0               # Avaliação em centipawns para aceitar/propor empate (0 = igualdade).
+              offer_draw_score: 10               # Avaliação em centipawns para aceitar/propor empate (0 = igualdade).
               offer_draw_for_egtb_zero: true    # Propõe/aceita empate se a base de finais indicar empate forçado (WDL = 0).
-              offer_draw_moves: 10              # Quantidade de lances seguidos com a pontuação de empate.
+              offer_draw_moves: 8              # Quantidade de lances seguidos com a pontuação de empate.
               offer_draw_pieces: 10             # Só propõe/aceita empate se houver até este número de peças no tabuleiro.
 
             online_moves:                       # Consulta de lances online (Livros na nuvem e bases de finais).
