@@ -24,15 +24,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential curl git clang llvm lld
 
-      - name: Clone and Compile Latest Deep Becky Engine (Clang + PGO)
+      - name: Clone and Compile Latest Deep Becky Engine (validated Clang build)
         run: |
+          set -euo pipefail
           echo "Cloning latest engine from official repository..."
-          git clone https://github.com/diogolov-chess/DeepBecky.git engine_repo
+          git clone --depth 1 https://github.com/diogolov-chess/DeepBecky.git engine_repo
           cd engine_repo/src
-          make distclean || make clean
-          # Compilação em 2 etapas com Clang + PGO (Profile-Guided Optimization) + ThinLTO + Native CPU
-          make pgo CXX=clang++ PROFILE=native
-          echo "Deep Becky Clang+PGO build complete!"
+          echo "Engine commit: $(git rev-parse HEAD)"
+          make clean
+          # PGO fica temporariamente desativado durante o diagnóstico Linux.
+          # ThinLTO e as instruções nativas continuam ativos.
+          make -j2 CXX=clang++ PROFILE=native
+          test -x ./DeepBecky_3.0
+          test -s ./db-leela500m-v5.nnue
+          sha256sum ./DeepBecky_3.0 ./db-leela500m-v5.nnue
+          echo "Deep Becky validated Clang build complete!"
 
       - name: Setup Lichess-Bot Environment & Dynamic Engine
         run: |
@@ -42,14 +48,23 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-          # 1. Encontra automaticamente o binário compilado (independente da versão: 3.0, 3.1, dev, etc.)
-          ENGINE_BIN=$(find ../engine_repo/src -maxdepth 1 -type f -executable ! -name "*.sh" ! -name "Makefile" | head -n 1)
-          echo "Detected engine binary: $ENGINE_BIN"
+          set -euo pipefail
+
+          # 1. Usa o artefato de produção explicitamente. Um find|head podia
+          # selecionar por engano um executável auxiliar de testes/diagnóstico.
+          ENGINE_BIN=../engine_repo/src/DeepBecky_3.0
+          test -x "$ENGINE_BIN"
+          echo "Selected engine binary: $ENGINE_BIN"
           cp "$ENGINE_BIN" ./engine_binary
           chmod +x ./engine_binary
 
-          # 2. Copia todas as redes neurais (.nnue) encontradas no repositório
-          cp ../engine_repo/src/*.nnue ./ 2>/dev/null || true
+          # 2. Copia e valida exatamente a rede treinada de produção.
+          MODEL=../engine_repo/src/db-leela500m-v5.nnue
+          EXPECTED_MODEL_SHA256=96c00c917949fd95ec8c2f31881885ac745838dd82aa6c26f63150c750b7ba05
+          test -s "$MODEL"
+          ACTUAL_MODEL_SHA256=$(sha256sum "$MODEL" | awk '{print $1}')
+          test "$ACTUAL_MODEL_SHA256" = "$EXPECTED_MODEL_SHA256"
+          cp "$MODEL" ./db-leela500m-v5.nnue
 
           # 3. Cria o arquivo de configuração com todos os comentários explicativos e opções
           cat << 'EOF' > config.yml
@@ -59,11 +74,11 @@ jobs:
           engine:                               # Configurações da Engine de Xadrez.
             dir: "./"                           # Diretório onde está a engine (pasta atual da VM).
             name: "engine_binary"               # Nome padrão (detecta qualquer versão compilada da Deep Becky automaticamente).
-            debug: false                        # Quando ativado (true), registra nos logs toda a comunicação inicial com a engine.
+            debug: true                         # Mantém o UCI visível enquanto o problema Linux é auditado.
           # interpreter: "java"                 # Interpretador caso a engine não seja executável nativo.
           # interpreter_options:
           #   - "-jar"
-            working_dir: ""                     # Diretório onde a engine lê e grava arquivos.
+            working_dir: "./"                   # Diretório onde a engine lê e grava arquivos.
             protocol: "uci"                     # Protocolo de comunicação: "uci", "xboard" ou "homemade".
             ponder: false                        # Pensar durante o tempo do adversário (pondering).
 
@@ -149,9 +164,12 @@ jobs:
 
             uci_options:                        # Opções UCI enviadas diretamente para a engine.
           #   Move Overhead: 100                # Aumente (em ms) se o bot perder por tempo com frequência.
-              Threads: 4                        # Otimizado: 4 vCPUs no GitHub Actions.
-              Hash: 2048                        # Otimizado: 2048 MB (2 GB) de Hash na RAM de 16GB.
-          #   EvalFile: "db-leela500m-v5.nnue"  # Nome da rede NNUE (Deep Becky detecta automaticamente se omitido).
+              # Isolamento conservador: elimina concorrência Lazy SMP do
+              # diagnóstico inicial. Reativar 4 somente após A/B no Linux.
+              Threads: 1
+              Hash: 512
+              Move Overhead: 100
+              EvalFile: "db-leela500m-v5.nnue"
           #   SyzygyPath: "./syzygy/"           # Caminho para as bases Syzygy lidas diretamente pela engine.
           #   UCI_ShowWDL: true                 # Exibir chances de vitória/empate/derrota nos logs da engine.
           #   go_commands:                      # Limites manuais para o comando 'go' do UCI.
@@ -292,6 +310,29 @@ jobs:
 
           # Injeta o token seguro vindo dos Secrets do GitHub
           sed -i "s|\${{ secrets.LICHESS_TOKEN }}|${{ secrets.LICHESS_TOKEN }}|g" config.yml
+
+          # O runner não fica online se a rede não carregar ou se a posição
+          # que originou 11...Qa5+?? voltar a falhar no artefato Linux real.
+          SMOKE_OUTPUT=$(printf '%s\n' \
+            'uci' \
+            'setoption name Threads value 1' \
+            'setoption name Hash value 64' \
+            'setoption name EvalFile value db-leela500m-v5.nnue' \
+            'isready' \
+            'ucinewgame' \
+            'position startpos moves e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6 f1e2 e7e5 d4b3 b8c6 c1e3 c8e6 c3d5 e6d5 e4d5 c6e7 c2c4' \
+            'eval' \
+            'go depth 8' \
+            'isready' \
+            'quit' | timeout 45s ./engine_binary 2>&1)
+          echo "$SMOKE_OUTPUT"
+          echo "$SMOKE_OUTPUT" | grep -F 'NNUE file loaded:'
+          echo "$SMOKE_OUTPUT" | grep -F 'info string Eval: -165'
+          BESTMOVE=$(echo "$SMOKE_OUTPUT" | awk '/^bestmove / {print $2; exit}')
+          test -n "$BESTMOVE"
+          test "$BESTMOVE" != "0000"
+          test "$BESTMOVE" != "d8a5"
+          echo "Linux smoke test passed with bestmove $BESTMOVE"
 
       - name: Run Lichess Bot Session with Graceful Handover
         run: |
