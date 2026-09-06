@@ -166,7 +166,7 @@ jobs:
           #   Move Overhead: 100                # Aumente (em ms) se o bot perder por tempo com frequência.
               # Isolamento conservador: elimina concorrência Lazy SMP do
               # diagnóstico inicial. Reativar 4 somente após A/B no Linux.
-              Threads: 1
+              Threads: 4
               Hash: 512
               Move Overhead: 100
               EvalFile: "db-leela500m-v5.nnue"
