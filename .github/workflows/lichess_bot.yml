@@ -80,7 +80,7 @@ jobs:
           #   - "-jar"
             working_dir: "./"                   # Diretório onde a engine lê e grava arquivos.
             protocol: "uci"                     # Protocolo de comunicação: "uci", "xboard" ou "homemade".
-            ponder: false                        # Pensar durante o tempo do adversário (pondering).
+            ponder: true                        # Pensar durante o tempo do adversário (pondering).
 
             polyglot:                           # Livro de aberturas Polyglot (.bin local).
               enabled: false                    # Ativar livro de aberturas polyglot.
