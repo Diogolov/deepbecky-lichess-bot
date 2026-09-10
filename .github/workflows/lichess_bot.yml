@@ -264,9 +264,9 @@ jobs:
               - 600                             # 10 minutos (Rapid)
               - 1200                            # 20 minutos
             challenge_increment:                # Incremento em segundos do desafio (escolhido da lista):
-          #    - 0
+              - 1
+              - 2
               - 10
-          #    - 2
           # challenge_days:                     # Dias por lance para correspondência enviada:
           #   - 1
           #   - 2
