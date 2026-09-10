@@ -261,12 +261,12 @@ jobs:
               - 60                              # 1 minuto (Bullet)
               - 180                             # 3 minutos (Blitz)
               - 300                             # 5 minutos (Blitz)
-              - 600                             # 10 minutos (Rapid)
-              - 1200                            # 20 minutos
+          #    - 600                             # 10 minutos (Rapid)
+              - 10                            # 
             challenge_increment:                # Incremento em segundos do desafio (escolhido da lista):
               - 1
               - 2
-              - 10
+          #    - 10
           # challenge_days:                     # Dias por lance para correspondência enviada:
           #   - 1
           #   - 2
