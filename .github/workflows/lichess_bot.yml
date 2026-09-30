@@ -98,9 +98,9 @@ jobs:
 
             draw_or_resign:                     # Configurações de Desistência e Proposta de Empate automáticos.
               resign_enabled: true             # Se o bot deve abandonar partidas perdidas automaticamente.
-              resign_score: -1000               # Pontuação em centipawns para abandonar (-1000 = -10 peões).
+              resign_score: -1500               # Pontuação em centipawns para abandonar (-1000 = -10 peões).
               resign_for_egtb_minus_two: true   # Abandona se a base de finais indicar derrota forçada (WDL = -2).
-              resign_moves: 5                   # Quantidade de lances seguidos abaixo do limite para abandonar.
+              resign_moves: 8                   # Quantidade de lances seguidos abaixo do limite para abandonar.
               offer_draw_enabled: true          # Se o bot deve oferecer / aceitar propostas de empate.
               offer_draw_score: 10               # Avaliação em centipawns para aceitar/propor empate (0 = igualdade).
               offer_draw_for_egtb_zero: true    # Propõe/aceita empate se a base de finais indicar empate forçado (WDL = 0).
