@@ -262,7 +262,7 @@ jobs:
               - 180                             # 3 minutos (Blitz)
               - 300                             # 5 minutos (Blitz)
               - 600                             # 10 minutos (Rapid)
-              - 10                            # 
+              - 1500                            # 
             challenge_increment:                # Incremento em segundos do desafio (escolhido da lista):
               - 1
               - 2
@@ -270,9 +270,9 @@ jobs:
           # challenge_days:                     # Dias por lance para correspondência enviada:
           #   - 1
           #   - 2
-            opponent_min_rating: 1800           # Rating mínimo do adversário a ser desafiado.
-            opponent_max_rating: 2500           # Rating máximo do adversário a ser desafiado.
-            opponent_rating_difference: 350     # Diferença máxima de rating do adversário a ser desafiado.
+            opponent_min_rating: 2200           # Rating mínimo do adversário a ser desafiado.
+            opponent_max_rating: 2900           # Rating máximo do adversário a ser desafiado.
+          # opponent_rating_difference: 350     # Diferença máxima de rating do adversário a ser desafiado.
             rating_preference: "none"           # "none" (qualquer), "high" (mais alto) ou "low" (mais baixo).
             challenge_mode: "rated"             # 'casual', 'rated' (valendo rating) ou 'random'.
             challenge_filter: "fine"            # Se recusado, filtro para não reenviar: 'none', 'coarse' ou 'fine'.
